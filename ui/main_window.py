@@ -209,7 +209,6 @@ class GameCard(ctk.CTkFrame):
                           font=ctk.CTkFont(size=13, weight="bold"),
                           command=self._play).pack(side="left", padx=(0, 6))
         else:
-            # Если игра из магазина / торрент — кнопка «Распаковать» (пароль уже известен)
             if game.get("archive_password") is not None or game.get("from_shop"):
                 ctk.CTkButton(btns, text="📦 Распаковать", width=120, height=34,
                               corner_radius=8, fg_color=WARNING, hover_color="#D97706",
@@ -247,7 +246,6 @@ class GameCard(ctk.CTkFrame):
             self.on_change()
 
     def _unpack_with_stored_password(self):
-        """Распаковка архива, пароль берётся из записи игры (из магазина)."""
         path = filedialog.askopenfilename(
             title="Выбери скачанный архив",
             filetypes=[("Архивы", "*.zip *.rar *.7z"), ("Все", "*.*")]
@@ -255,7 +253,7 @@ class GameCard(ctk.CTkFrame):
         if not path:
             return
 
-        password = self.game.get("archive_password")  # может быть None / ""
+        password = self.game.get("archive_password")
 
         def worker():
             ok, msg, install_path, exe_path = self.installer.install_from_archive(
@@ -329,12 +327,9 @@ class ShopCard(ctk.CTkFrame):
         self.install_btn.grid(row=3, column=0, sticky="ew", padx=16, pady=(0, 14))
 
     def _install(self):
-        """Один клик: добавляем в библиотеку + стартуем торрент. Пароль уже внутри."""
         g = self.game
         magnet = g.get("magnet")
-        torrent_url = g.get("torrent_url")
 
-        # Добавляем в библиотеку сразу с паролем из каталога
         lib_game = self.library.add_game(
             title=g.get("title", "Без названия"),
             torrent_path=None,
@@ -343,23 +338,25 @@ class ShopCard(ctk.CTkFrame):
             lib_game["id"],
             catalog_id=g.get("id"),
             from_shop=True,
-            archive_password=g.get("archive_password"),  # ← пароль уже здесь
+            archive_password=g.get("archive_password"),
             status="downloading",
         )
 
         if magnet:
             ok = self.downloader.start_torrent_via_qbittorrent(magnet, lib_game["id"])
             if ok:
+                title = g.get("title", "Игра")
                 messagebox.showinfo(
                     "Торрент запущен",
-                    f«{g.get('title')}» добавлен в qBittorrent.\n\n"
+                    f"«{title}» добавлен в qBittorrent.\n\n"
                     "Когда скачается — зайди в Библиотеку и нажми «Распаковать».\n"
                     "Пароль вводить не нужно, он уже известен лаунчеру."
                 )
             else:
                 messagebox.showwarning(
                     "qBittorrent",
-                    "Не удалось добавить торрент.\nУбедись, что qBittorrent запущен и WebUI включен (обычно localhost:8080).\n"
+                    "Не удалось добавить торрент.\n"
+                    "Убедись, что qBittorrent запущен и WebUI включен (localhost:8080).\n"
                     "Игра всё равно добавлена в библиотеку — сможешь распаковать архив вручную."
                 )
         else:
@@ -446,7 +443,7 @@ class MainWindow(ctk.CTk):
 
         self.pages = {}
 
-        # ── Библиотека ──
+        # Библиотека
         lib = ctk.CTkFrame(self.content, fg_color="transparent")
         lib.grid_columnconfigure(0, weight=1)
         lib.grid_rowconfigure(1, weight=1)
@@ -467,24 +464,24 @@ class MainWindow(ctk.CTk):
         self.games_scroll.grid_columnconfigure((0, 1), weight=1, uniform="g")
         self.pages["library"] = lib
 
-        # ── Магазин ──
+        # Магазин
         shop = ctk.CTkFrame(self.content, fg_color="transparent")
         shop.grid_columnconfigure(0, weight=1)
         shop.grid_rowconfigure(1, weight=1)
 
         ctk.CTkLabel(shop, text="Магазин",
                      font=ctk.CTkFont(size=26, weight="bold")).grid(
-            row=0, column=0, sticky="w", padx=28, pady=(24, 8))
+            row=0, column=0, sticky="w", padx=28, pady=(24, 4))
         ctk.CTkLabel(shop, text="Игры для всех. Пароль уже внутри — ставишь в один клик.",
                      font=ctk.CTkFont(size=13), text_color=TEXT_DIM).grid(
-            row=0, column=0, sticky="w", padx=28, pady=(52, 12))
+            row=0, column=0, sticky="w", padx=28, pady=(56, 12))
 
         self.shop_scroll = ctk.CTkScrollableFrame(shop, fg_color="transparent")
         self.shop_scroll.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0, 16))
         self.shop_scroll.grid_columnconfigure((0, 1), weight=1, uniform="s")
         self.pages["shop"] = shop
 
-        # ── Загрузки ──
+        # Загрузки
         dl = ctk.CTkFrame(self.content, fg_color="transparent")
         ctk.CTkLabel(dl, text="Загрузки",
                      font=ctk.CTkFont(size=26, weight="bold")).pack(anchor="w", padx=28, pady=(24, 8))
@@ -493,7 +490,7 @@ class MainWindow(ctk.CTk):
             anchor="w", padx=28, pady=10)
         self.pages["downloads"] = dl
 
-        # ── Настройки ──
+        # Настройки
         st = ctk.CTkFrame(self.content, fg_color="transparent")
         ctk.CTkLabel(st, text="Настройки",
                      font=ctk.CTkFont(size=26, weight="bold")).pack(anchor="w", padx=28, pady=(24, 16))
