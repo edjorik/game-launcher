@@ -1,10 +1,11 @@
 [
   {
-    "id": "example_game",
-    "title": "Пример игры (замени меня)",
-    "description": "Это тестовая запись. Удали и добавь свои игры.",
-    "size_mb": 100,
-    "magnet": "",
+    "id": "papersplease",
+    "title": "Papers Please",
+    "description": "pp ept",
+    "size_mb": 50,
+    "magnet": "magnet:?xt=urn:btih:79291c86af9d9e2ebd39efabfd4442836685f217&dn=Papers_Please_1.4.11.124_%2863294%29_win_gog&xl=59155401&tr=udp%3A%2F%2Fopentor.net%3A6969&tr=http%3A%2F%2Fretracker.local%2Fannounce&tr=http%3A%2F%2Ftracker.grepler.com%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.dler.com%3A6969%2Fannounce&tr=http%3A%2F%2Fh4.trakx.nibba.trade%3A80%2Fannounce&tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce&tr=udp%3A%2F%2Ftracker.bitsearch.to%3A1337%2Fannounce&tr=udp%3A%2F%2Fexodus.desync.com%3A6969%2Fannounce",
     "archive_password": ""
   }
+
 ]
