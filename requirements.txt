@@ -1,0 +1,13 @@
+customtkinter>=5.2.2
+pillow>=10.0.0
+requests>=2.31.0
+httpx>=0.27.0
+aiohttp>=3.9.0
+python-dotenv>=1.0.0
+packaging>=24.0
+qbitorrent-api>=2024.2.59
+# Для торрентов можно использовать libtorrent, но он тяжелый для сборки в .exe
+# libtorrent
+# Для автообновлений
+pyupdater>=4.0.0
+# Или просто свой механизм через GitHub Releases
