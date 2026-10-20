@@ -1,16 +1,23 @@
 """
-Менеджер загрузок: торрент → ожидание завершения → автораспаковка → готово.
+Менеджер загрузок: торрент → ожидание завершения → умная установка.
+
+После скачивания лаунчер сам определяет, что пришло:
+  1. Архив (.zip / .rar / .7z)  → распаковывает (с паролем) → ищет .exe
+  2. Готовый .exe               → сразу ставит кнопку «Играть»
+  3. Папка с игрой              → ищет .exe внутри (рекурсивно)
 """
 
 import threading
 import time
 from pathlib import Path
-from typing import Optional, Callable, Dict, Any
+from typing import Optional, Callable, Dict, Any, List
 
 from core.torrent_engine import TorrentEngine
 from core.installer import Installer
 from core.library import Library
 from config import GAMES_DIR
+
+ARCHIVE_EXTS = {".zip", ".rar", ".7z"}
 
 
 class DownloadManager:
@@ -18,7 +25,7 @@ class DownloadManager:
         self.library = library
         self.engine = TorrentEngine()
         self.installer = Installer()
-        self.active: Dict[str, Dict[str, Any]] = {}  # game_id -> info
+        self.active: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.Lock()
 
     def start_shop_game(
@@ -30,11 +37,6 @@ class DownloadManager:
         on_progress: Optional[Callable[[str, float, str], None]] = None,
         on_finished: Optional[Callable[[str, bool, str], None]] = None,
     ):
-        """
-        Запускает скачивание магазинной игры.
-        on_progress(game_id, percent, status_text)
-        on_finished(game_id, success, message)
-        """
         if not magnet:
             if on_finished:
                 on_finished(game_id, False, "Нет magnet-ссылки")
@@ -61,8 +63,6 @@ class DownloadManager:
             }
 
         self.library.update_game(game_id, status="downloading", download_gid=gid)
-
-        # Фоновый мониторинг
         threading.Thread(target=self._monitor, args=(game_id,), daemon=True).start()
 
     def _monitor(self, game_id: str):
@@ -92,76 +92,114 @@ class DownloadManager:
                     with self._lock:
                         self.active.pop(game_id, None)
                     return
-
             except Exception as e:
                 if on_progress:
                     on_progress(game_id, 0, str(e))
 
             time.sleep(1.5)
 
-        # Скачивание закончено → ищем архив и ставим
+        # ========== Скачивание закончено — разбираемся, что пришло ==========
         if on_progress:
-            on_progress(game_id, 100, "Скачано, устанавливаю...")
+            on_progress(game_id, 100, "Скачано, определяю тип...")
 
-        files = self.engine.get_downloaded_files(gid)
-        archive = None
-        for f in files:
-            if f.suffix.lower() in (".zip", ".rar", ".7z") and f.exists():
-                archive = f
-                break
+        download_dir: Path = info["download_dir"]
+        title = info["title"]
+        password = info.get("password")
 
-        # Иногда торрент качает папку с архивом внутри
-        if archive is None:
-            for f in info["download_dir"].rglob("*"):
-                if f.suffix.lower() in (".zip", ".rar", ".7z") and f.is_file():
-                    archive = f
-                    break
+        # Собираем все скачанные файлы
+        all_files: List[Path] = []
+        try:
+            all_files = [f for f in self.engine.get_downloaded_files(gid) if f.exists()]
+        except Exception:
+            pass
 
-        if archive is None:
-            # Может торрент уже отдал готовую папку с игрой
-            exe = self.installer.find_exe(info["download_dir"], preferred_names=[info["title"]])
-            if exe:
+        if not all_files:
+            all_files = [f for f in download_dir.rglob("*") if f.is_file()]
+
+        # ---- Вариант 1: есть архив ----
+        archive = self._find_archive(all_files, download_dir)
+        if archive:
+            if on_progress:
+                on_progress(game_id, 100, f"Найден архив {archive.name}, распаковываю...")
+
+            ok, msg, install_path, exe_path = self.installer.install_from_archive(
+                archive,
+                title=title,
+                password=password,
+                delete_archive_after=True,
+            )
+
+            if ok and exe_path:
                 self.library.mark_installed(
                     game_id,
-                    install_path=str(info["download_dir"]),
-                    exe_path=str(exe),
+                    install_path=str(install_path) if install_path else "",
+                    exe_path=str(exe_path),
                 )
                 if on_finished:
-                    on_finished(game_id, True, f"Готово! Найден {exe.name}")
-                with self._lock:
-                    self.active.pop(game_id, None)
-                return
+                    on_finished(game_id, True, msg)
+            else:
+                self.library.update_game(game_id, status="error")
+                if on_finished:
+                    on_finished(game_id, False, msg or "Не удалось распаковать архив")
 
-            if on_finished:
-                on_finished(game_id, False, "Архив не найден после скачивания")
-            self.library.update_game(game_id, status="error")
             with self._lock:
                 self.active.pop(game_id, None)
             return
 
-        # Распаковываем с паролем из каталога
-        ok, msg, install_path, exe_path = self.installer.install_from_archive(
-            archive,
-            title=info["title"],
-            password=info.get("password"),
-            delete_archive_after=True,
-        )
+        # ---- Вариант 2: торрент отдал готовый .exe (или папку с игрой) ----
+        exe = self.installer.find_exe(download_dir, preferred_names=[title])
 
-        if ok and exe_path:
+        # Дополнительно: если среди скачанных файлов один жирный .exe — берём его
+        if exe is None:
+            exe_candidates = [
+                f for f in all_files
+                if f.suffix.lower() == ".exe" and f.is_file()
+            ]
+            # отсеиваем мусор
+            ignore = ("unins", "vcredist", "directx", "unitycrash", "crashhandler", "setup", "install")
+            exe_candidates = [
+                f for f in exe_candidates
+                if not any(k in f.name.lower() for k in ignore)
+            ]
+            if exe_candidates:
+                # самый большой = скорее всего игра
+                exe_candidates.sort(key=lambda p: p.stat().st_size, reverse=True)
+                exe = exe_candidates[0]
+
+        if exe:
             self.library.mark_installed(
                 game_id,
-                install_path=str(install_path) if install_path else "",
-                exe_path=str(exe_path),
+                install_path=str(download_dir),
+                exe_path=str(exe),
             )
             if on_finished:
-                on_finished(game_id, True, msg)
-        else:
-            self.library.update_game(game_id, status="error")
-            if on_finished:
-                on_finished(game_id, False, msg or "Не удалось установить")
+                on_finished(game_id, True, f"Готово! Это был .exe / папка. Найден: {exe.name}")
+            with self._lock:
+                self.active.pop(game_id, None)
+            return
 
+        # ---- Вариант 3: нихуя не понятно ----
+        self.library.update_game(game_id, status="error")
+        if on_finished:
+            on_finished(
+                game_id,
+                False,
+                "Скачалось, но не удалось найти ни архив, ни .exe. "
+                "Можешь указать файл запуска вручную в библиотеке."
+            )
         with self._lock:
             self.active.pop(game_id, None)
+
+    def _find_archive(self, files: List[Path], root: Path) -> Optional[Path]:
+        """Ищет архив среди скачанных файлов."""
+        for f in files:
+            if f.suffix.lower() in ARCHIVE_EXTS and f.is_file():
+                return f
+        # на всякий случай ещё раз по папке
+        for f in root.rglob("*"):
+            if f.suffix.lower() in ARCHIVE_EXTS and f.is_file():
+                return f
+        return None
 
     def get_active_progress(self, game_id: str) -> Optional[tuple[float, str]]:
         info = self.active.get(game_id)
