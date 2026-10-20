@@ -1,33 +1,27 @@
 """
 Каталог / «Магазин» игр.
-Эти игры видны всем. Пароль к архиву хранится здесь (или потом будет приходить с сервера).
-Пользователь ставит в один клик — пароль вводить не нужно.
+
+Источник правды — файл catalog.json в GitHub-репозитории.
+Лаунчер при запуске скачивает его. Обычные пользователи
+не могут менять магазин — только ты, через репозиторий.
 """
 
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 import json
+import urllib.request
+import urllib.error
 
 from config import CONFIG_DIR
 
-CATALOG_FILE = CONFIG_DIR / "catalog.json"
+# Куда кэшируем локально (только для офлайна)
+CACHE_FILE = CONFIG_DIR / "catalog_cache.json"
 
-
-# Пока хардкод + возможность переопределить через catalog.json
-# Когда появится сервер — просто будем тянуть оттуда.
-DEFAULT_CATALOG: List[Dict[str, Any]] = [
-    # Пример. Замени на свои реальные игры.
-    # {
-    #     "id": "cyber_neon",
-    #     "title": "Cyber Neon Runner",
-    #     "description": "Неоновый раннер",
-    #     "size_mb": 1200,
-    #     "torrent_url": None,          # ссылка на .torrent или magnet
-    #     "magnet": "magnet:?xt=urn:btih:....",
-    #     "archive_password": "mypass123",  # ← пароль уже здесь
-    #     "cover": None,
-    # },
-]
+# Публичный URL каталога (raw с GitHub)
+# Менять не нужно — он всегда указывает на твой репозиторий
+REMOTE_CATALOG_URL = (
+    "https://raw.githubusercontent.com/edjorik/game-launcher/main/catalog.json"
+)
 
 
 class Catalog:
@@ -36,21 +30,56 @@ class Catalog:
         self._load()
 
     def _load(self):
-        if CATALOG_FILE.exists():
+        # 1. Пытаемся скачать свежий каталог с GitHub
+        remote = self._fetch_remote()
+        if remote is not None:
+            self.games = remote
+            self._save_cache()
+            return
+
+        # 2. Если интернета нет — берём кэш
+        if CACHE_FILE.exists():
             try:
-                self.games = json.loads(CATALOG_FILE.read_text(encoding="utf-8"))
+                self.games = json.loads(CACHE_FILE.read_text(encoding="utf-8"))
                 return
             except Exception:
                 pass
-        self.games = list(DEFAULT_CATALOG)
-        self._save()
 
-    def _save(self):
-        CATALOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        CATALOG_FILE.write_text(
-            json.dumps(self.games, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        # 3. Совсем пусто
+        self.games = []
+
+    def _fetch_remote(self) -> Optional[List[Dict[str, Any]]]:
+        try:
+            req = urllib.request.Request(
+                REMOTE_CATALOG_URL,
+                headers={"User-Agent": "NexusLauncher/1.0"},
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                if isinstance(data, list):
+                    return data
+        except Exception as e:
+            print(f"[Catalog] Не удалось скачать каталог: {e}")
+        return None
+
+    def _save_cache(self):
+        try:
+            CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            CACHE_FILE.write_text(
+                json.dumps(self.games, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+    def refresh(self) -> bool:
+        """Принудительно обновить каталог с сервера."""
+        remote = self._fetch_remote()
+        if remote is not None:
+            self.games = remote
+            self._save_cache()
+            return True
+        return False
 
     def get_all(self) -> List[Dict[str, Any]]:
         return self.games
@@ -58,18 +87,5 @@ class Catalog:
     def get_by_id(self, game_id: str) -> Optional[Dict[str, Any]]:
         for g in self.games:
             if g.get("id") == game_id:
-                return g
-        return None
-
-    def add_game(self, game: Dict[str, Any]):
-        """Добавить игру в каталог (для тебя как админа)."""
-        self.games.append(game)
-        self._save()
-
-    def update_game(self, game_id: str, **kwargs):
-        for g in self.games:
-            if g.get("id") == game_id:
-                g.update(kwargs)
-                self._save()
                 return g
         return None
